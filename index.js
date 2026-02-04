@@ -79,6 +79,34 @@ const CESD_CHOICES = [
   { label: "거의 대부분 (5-7일) (3점)", score: 3 }
 ];
 
+// ======================
+// CBI 기반 번아웃 문항 (한국어, 14문항)
+// ======================
+const CBI_QUESTIONS = [
+  "1. 나는 요즘 전반적으로 매우 지쳐 있다고 느낀다.",
+  "2. 하루를 보내고 나면 기력이 거의 남아 있지 않다.",
+  "3. 아침에 일어나 하루를 시작하는 것이 버겁게 느껴진다.",
+  "4. 충분히 쉬어도 피로가 쉽게 회복되지 않는다.",
+  "5. 신체적·정신적으로 탈진된 느낌이 자주 든다.",
+  "6. 나의 일(학업/실습 포함) 때문에 지쳐 있다고 느낀다.",
+  "7. 업무를 수행하는 동안 에너지가 빠르게 소진된다.",
+  "8. 일을 생각하면 피로감이 먼저 떠오른다.",
+  "9. 업무가 끝난 후에도 긴장이 쉽게 풀리지 않는다.",
+  "10. 현재의 업무 강도가 나에게 과도하다고 느껴진다.",
+  "11. 사람들을 상대하는 일이 예전보다 훨씬 힘들게 느껴진다.",
+  "12. 타인의 요구나 감정에 지치거나 부담을 느낀다.",
+  "13. 사람들과의 상호작용 후 정서적으로 소모된 느낌이 든다.",
+  "14. 사람을 상대하는 상황을 가능하면 피하고 싶다."
+];
+
+const CBI_CHOICES = [
+  { label: "전혀 그렇지 않다 (0점)", score: 0 },
+  { label: "가끔 그렇다 (1점)", score: 1 },
+  { label: "자주 그렇다 (2점)", score: 2 },
+  { label: "대부분 그렇다 (3점)", score: 3 },
+  { label: "거의 항상 그렇다 (4점)", score: 4 }
+];
+
 // ✅ 역채점 문항(긍정 문항) - 현재 이미지에 보이는 기준: 05, 10, 15
 // 역채점: 0↔3, 1↔2
 const CESD_REVERSE_ITEMS = new Set([5, 10, 15]); // 문항번호(1부터 시작)
@@ -105,6 +133,7 @@ function getOrCreateUserState(userId) {
       phq9: { qIndex: 0, answers: [] },
       gad7: { qIndex: 0, answers: [] },
       cesd: { qIndex: 0, answers: [] },
+      cbi: { qIndex: 0, answers: [] },
       updatedAt: Date.now()
     };
   }
@@ -235,6 +264,35 @@ function buildCESDResultResponse(total) {
         { label: "CES-D 다시하기", action: "message", messageText: "CESD_START" },
         { label: "PHQ-9 하기", action: "message", messageText: "PHQ9_START" },
         { label: "GAD-7 하기", action: "message", messageText: "GAD7_START" },
+        { label: "처음으로", action: "message", messageText: "HOME" }
+      ]
+    }
+  };
+}
+
+
+function buildCBIResultResponse(total) {
+  let level = "";
+  if (total <= 18) level = "번아웃 위험 낮음";
+  else if (total <= 35) level = "중등도 번아웃";
+  else level = "높은 번아웃 위험";
+
+  return {
+    version: "2.0",
+    template: {
+      outputs: [
+        {
+          simpleText: {
+            text:
+              `번아웃 점검 완료\n총점: ${total}점\n상태: ${level}\n\n` +
+              `본 검사는 Copenhagen Burnout Inventory(CBI)를 참고한 자가 점검입니다.\n` +
+              `진단 목적이 아니며, 불편감이 지속되면 상담을 권장합니다.`
+          }
+        }
+      ],
+      quickReplies: [
+        { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
+        { label: "번아웃 다시하기", action: "message", messageText: "CBI_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
@@ -490,6 +548,57 @@ app.post("/skill/cesd", (req, res) => {
   // 그 외 입력
   return res.status(200).json(buildFallbackResponse());
 });
+
+
+app.post("/skill/cbi", (req, res) => {
+  const utterance = req.body?.userRequest?.utterance || "";
+  const userId = getUserId(req.body);
+  const state = getOrCreateUserState(userId);
+  state.updatedAt = Date.now();
+
+  if (utterance === "CBI_START") {
+    const s = resetSurvey(userId, "cbi");
+    return res.status(200).json(
+      buildQuestionResponse({
+        title: "번아웃 점검 (CBI 기반)",
+        qIndex: s.qIndex,
+        totalCount: CBI_QUESTIONS.length,
+        questionText: CBI_QUESTIONS[s.qIndex],
+        choices: CBI_CHOICES,
+        answerPrefix: "CBI_A"
+      })
+    );
+  }
+
+  if (/^CBI_A[0-4]$/.test(utterance)) {
+    const score = Number(utterance.replace("CBI_A", ""));
+    const s = state.cbi;
+    s.answers.push(score);
+    s.qIndex += 1;
+
+    if (s.qIndex < CBI_QUESTIONS.length) {
+      return res.status(200).json(
+        buildQuestionResponse({
+          title: "번아웃 점검 (CBI 기반)",
+          qIndex: s.qIndex,
+          totalCount: CBI_QUESTIONS.length,
+          questionText: CBI_QUESTIONS[s.qIndex],
+          choices: CBI_CHOICES,
+          answerPrefix: "CBI_A"
+        })
+      );
+    }
+
+    const total = s.answers.reduce((a, b) => a + b, 0);
+    return res.status(200).json(buildCBIResultResponse(total));
+  }
+
+  if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
+  if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
+
+  return res.status(200).json(buildFallbackResponse());
+});
+
 
 // ======================
 // 6) 세션 자동 정리 (메모리 누적 방지)
