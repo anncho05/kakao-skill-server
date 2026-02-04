@@ -46,6 +46,44 @@ const GAD7_CHOICES = [
 ];
 
 // ======================
+// 3) CES-D (한국판) 문항 (20문항) + 선택지
+// ======================
+const CESD_QUESTIONS = [
+  "01. 평소에는 아무렇지도 않던 일이 괴롭고 귀찮게 느껴졌다.",
+  "02. 먹고 싶지 않았고 식욕이 없었다.",
+  "03. 어느 누가 도와준다 하더라도, 나의 울적한 기분을 떨쳐버릴 수 없을 것 같았다.",
+  "04. 무슨 일을 하던 정신을 집중하기가 어려웠다.",
+  "05. 비교적 잘 지냈다.",
+  "06. 상당히 우울했다.",
+  "07. 모든 일들이 힘들게 느껴졌다.",
+  "08. 앞일이 암담하게 느껴졌다.",
+  "09. 지금까지의 내 인생은 실패작이라는 생각이 들었다.",
+  "10. 적어도 보통 사람들만큼의 능력은 있었다고 생각한다.",
+  "11. 잠을 설쳤다(잠을 잘 이루지 못했다).",
+  "12. 두려움을 느꼈다.",
+  "13. 평소에 비해 말수가 적었다.",
+  "14. 세상에 홀로 있는 듯한 외로움을 느꼈다.",
+  "15. 큰 불만 없이 생활했다.",
+  "16. 사람들이 나에게 차갑게 대하는 것 같았다.",
+  "17. 갑자기 울음이 나왔다.",
+  "18. 마음이 슬펐다.",
+  "19. 사람들이 나를 싫어하는 것 같았다.",
+  "20. 도무지 뭘 해 나갈 엄두가 나지 않았다."
+];
+
+// CES-D 선택지(지난 1주일)
+const CESD_CHOICES = [
+  { label: "극히 드물게 (1일 이하) (0점)", score: 0 },
+  { label: "가끔 (1-2일) (1점)", score: 1 },
+  { label: "자주 (3-4일) (2점)", score: 2 },
+  { label: "거의 대부분 (5-7일) (3점)", score: 3 }
+];
+
+// ✅ 역채점 문항(긍정 문항) - 현재 이미지에 보이는 기준: 05, 10, 15
+// 역채점: 0↔3, 1↔2
+const CESD_REVERSE_ITEMS = new Set([5, 10, 15]); // 문항번호(1부터 시작)
+
+// ======================
 // 3) 다중 사용자 세션 저장소 (메모리 기반)
 // sessions[userId] = { phq9: {qIndex, answers}, gad7: {qIndex, answers}, updatedAt }
 // ======================
@@ -66,6 +104,7 @@ function getOrCreateUserState(userId) {
     sessions[userId] = {
       phq9: { qIndex: 0, answers: [] },
       gad7: { qIndex: 0, answers: [] },
+      cesd: { qIndex: 0, answers: [] },
       updatedAt: Date.now()
     };
   }
@@ -173,6 +212,35 @@ function buildGAD7ResultResponse(total) {
     }
   };
 }
+
+
+function buildCESDResultResponse(total) {
+  let guide = total < 16 ? "낮은 수준(참고)" : "상대적으로 높은 수준(참고)";
+
+  return {
+    version: "2.0",
+    template: {
+      outputs: [
+        {
+          simpleText: {
+            text:
+              `CES-D 완료\n총점: ${total}점 (0–60)\n해석: ${guide}\n\n` +
+              `이 결과는 진단이 아니라 지난 1주일의 우울 관련 증상 점검용입니다.\n` +
+              `불편감이 지속되면 상담/전문가 도움을 고려해 주세요.`
+          }
+        }
+      ],
+      quickReplies: [
+        { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
+        { label: "CES-D 다시하기", action: "message", messageText: "CESD_START" },
+        { label: "PHQ-9 하기", action: "message", messageText: "PHQ9_START" },
+        { label: "GAD-7 하기", action: "message", messageText: "GAD7_START" },
+        { label: "처음으로", action: "message", messageText: "HOME" }
+      ]
+    }
+  };
+}
+
 
 function buildHelpResponse() {
   return {
@@ -352,6 +420,74 @@ app.post("/skill/gad7", (req, res) => {
   if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
   if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
 
+  return res.status(200).json(buildFallbackResponse());
+});
+
+app.post("/skill/cesd", (req, res) => {
+  console.log("=== CESD skill payload ===");
+  console.log(JSON.stringify(req.body, null, 2));
+
+  const utterance = req.body?.userRequest?.utterance || "";
+  const userId = getUserId(req.body);
+  const state = getOrCreateUserState(userId);
+  state.updatedAt = Date.now();
+
+  // 1️⃣ CES-D 시작
+  if (utterance === "CESD_START" || utterance === "CES-D" || utterance === "CESD") {
+    const s = resetSurvey(userId, "cesd");
+    return res.status(200).json(
+      buildQuestionResponse({
+        title: "CES-D (지난 1주일)",
+        qIndex: s.qIndex,
+        totalCount: CESD_QUESTIONS.length,
+        questionText: CESD_QUESTIONS[s.qIndex],
+        choices: CESD_CHOICES,
+        answerPrefix: "CESD_A"
+      })
+    );
+  }
+
+  // 2️⃣ 점수 응답 처리
+  if (/^CESD_A[0-3]$/.test(utterance)) {
+    const rawScore = Number(utterance.replace("CESD_A", ""));
+    const s = state.cesd;
+
+    // 문항 번호 (1부터 시작)
+    const itemNo = s.qIndex + 1;
+
+    // 역채점 문항 처리
+    const score = CESD_REVERSE_ITEMS.has(itemNo)
+      ? 3 - rawScore
+      : rawScore;
+
+    s.answers.push(score);
+    s.qIndex += 1;
+    state.updatedAt = Date.now();
+
+    // 다음 문항
+    if (s.qIndex < CESD_QUESTIONS.length) {
+      return res.status(200).json(
+        buildQuestionResponse({
+          title: "CES-D (지난 1주일)",
+          qIndex: s.qIndex,
+          totalCount: CESD_QUESTIONS.length,
+          questionText: CESD_QUESTIONS[s.qIndex],
+          choices: CESD_CHOICES,
+          answerPrefix: "CESD_A"
+        })
+      );
+    }
+
+    // 3️⃣ 결과 출력
+    const total = s.answers.reduce((a, b) => a + b, 0);
+    return res.status(200).json(buildCESDResultResponse(total));
+  }
+
+  // 공통 명령
+  if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
+  if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
+
+  // 그 외 입력
   return res.status(200).json(buildFallbackResponse());
 });
 
