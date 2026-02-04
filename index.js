@@ -333,14 +333,17 @@ function buildHomeResponse() {
       outputs: [
         {
           simpleText: {
-            text: "처음으로 돌아왔습니다. 원하는 설문을 선택해 주세요."
+            text: "원하는 설문을 선택해 주세요."
           }
         }
       ],
       quickReplies: [
-        { label: "PHQ-9 시작", action: "message", messageText: "PHQ9_START" },
-        { label: "GAD-7 시작", action: "message", messageText: "GAD7_START" }
-      ]
+ 	{ label: "PHQ-9", action: "message", messageText: "PHQ9_START" },
+  	{ label: "GAD-7", action: "message", messageText: "GAD7_START" },
+  	{ label: "CES-D", action: "message", messageText: "CESD_START" },
+  	{ label: "번아웃(CBI)", action: "message", messageText: "CBI_START" },
+  	{ label: "상담 안내", action: "message", messageText: "HELP_LINK" }
+	]
     }
   };
 }
