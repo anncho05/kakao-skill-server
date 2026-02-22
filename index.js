@@ -1,9 +1,12 @@
-#GPT_수정본
-
 const express = require("express");
 const app = express();
 
 app.use(express.json());
+
+// ======================
+// [설정] 사후 조사 링크 (실제 링크로 변경해주세요)
+// ======================
+const POST_SURVEY_URL = "https://forms.gle/xurnS3cxRtRbQbnh7";
 
 // ======================
 // 1) PHQ-9 문항
@@ -20,17 +23,15 @@ const PHQ9_QUESTIONS = [
   "9. 차라리 죽는 것이 더 낫겠다고 생각했다 / 혹은 자해할 생각을 했다."
 ];
 
-const FEEDBACK_URL = "https://forms.gle/zJFE9p5gWWcmVdYJ7";
-
 const PHQ9_CHOICES = [
   { label: "전혀 아니다 (0점)", score: 0 },
-  { label: "여러 날 동안 (1점)", score: 1 },
+  { label: "3-4일 정도 (1점)", score: 1 }, // 피드백 반영: 텍스트 수정
   { label: "일주일 이상 (2점)", score: 2 },
   { label: "거의 매일 (3점)", score: 3 }
 ];
 
 // ======================
-// 2) GAD-7 문항 (사용자 제공 문구 기반)
+// 2) GAD-7 문항
 // ======================
 const GAD7_QUESTIONS = [
   "1. 초조하거나 불안하거나 조마조마하게 느낀다.",
@@ -50,24 +51,24 @@ const GAD7_CHOICES = [
 ];
 
 // ======================
-// 3) CES-D (한국판) 문항 (20문항) + 선택지
+// 3) CES-D (한국판) 문항 (20문항)
 // ======================
 const CESD_QUESTIONS = [
   "01. 평소에는 아무렇지도 않던 일이 괴롭고 귀찮게 느껴졌다.",
   "02. 먹고 싶지 않았고 식욕이 없었다.",
   "03. 어느 누가 도와준다 하더라도, 나의 울적한 기분을 떨쳐버릴 수 없을 것 같았다.",
   "04. 무슨 일을 하던 정신을 집중하기가 어려웠다.",
-  "05. 비교적 잘 지냈다.",
+  "05. 평소처럼 잘 지내기 어려웠다.", // 피드백 반영: 질문 반대로 변경
   "06. 상당히 우울했다.",
   "07. 모든 일들이 힘들게 느껴졌다.",
   "08. 앞일이 암담하게 느껴졌다.",
   "09. 지금까지의 내 인생은 실패작이라는 생각이 들었다.",
-  "10. 적어도 보통 사람들만큼의 능력은 있었다고 생각한다.",
+  "10. 다른 사람들에 비해 내 능력이 부족하다고 느꼈다.", // 피드백 반영: 질문 반대로 변경
   "11. 잠을 설쳤다(잠을 잘 이루지 못했다).",
   "12. 두려움을 느꼈다.",
   "13. 평소에 비해 말수가 적었다.",
   "14. 세상에 홀로 있는 듯한 외로움을 느꼈다.",
-  "15. 큰 불만 없이 생활했다.",
+  "15. 내 생활에 불만이 많았다.", // 피드백 반영: 질문 반대로 변경
   "16. 사람들이 나에게 차갑게 대하는 것 같았다.",
   "17. 갑자기 울음이 나왔다.",
   "18. 마음이 슬펐다.",
@@ -75,16 +76,16 @@ const CESD_QUESTIONS = [
   "20. 도무지 뭘 해 나갈 엄두가 나지 않았다."
 ];
 
-// CES-D 선택지(지난 1주일)
 const CESD_CHOICES = [
   { label: "극히 드물게 (1일 이하) (0점)", score: 0 },
   { label: "가끔 (1-2일) (1점)", score: 1 },
   { label: "자주 (3-4일) (2점)", score: 2 },
   { label: "거의 대부분 (5-7일) (3점)", score: 3 }
 ];
+// (피드백 반영) CESD_REVERSE_ITEMS 세트 및 역채점 로직은 제거되었습니다.
 
 // ======================
-// CBI 기반 번아웃 문항 (한국어, 14문항)
+// 4) CBI 기반 번아웃 문항
 // ======================
 const CBI_QUESTIONS = [
   "1. 나는 요즘 전반적으로 매우 지쳐 있다고 느낀다.",
@@ -111,13 +112,8 @@ const CBI_CHOICES = [
   { label: "거의 항상 그렇다 (4점)", score: 4 }
 ];
 
-// ✅ 역채점 문항(긍정 문항) - 현재 이미지에 보이는 기준: 05, 10, 15
-// 역채점: 0↔3, 1↔2
-const CESD_REVERSE_ITEMS = new Set([5, 10, 15]); // 문항번호(1부터 시작)
-
 // ======================
-// 3) 다중 사용자 세션 저장소 (메모리 기반)
-// sessions[userId] = { phq9: {qIndex, answers}, gad7: {qIndex, answers}, updatedAt }
+// 5) 다중 사용자 세션 저장소 (메모리 기반)
 // ======================
 const sessions = Object.create(null);
 
@@ -152,17 +148,23 @@ function resetSurvey(userId, surveyKey) {
 }
 
 // ======================
-// 4) 응답 빌더
+// 6) 응답 빌더
 // ======================
-function buildQuestionResponse({ title, qIndex, totalCount, questionText, choices, answerPrefix }) {
+
+// 피드백 반영: 검사에 대한 간략한 설명(description)을 첫 문항에 띄웁니다.
+function buildQuestionResponse({ title, description, qIndex, totalCount, questionText, choices, answerPrefix }) {
+  let text = `${title} (${qIndex + 1}/${totalCount})\n`;
+  if (qIndex === 0 && description) {
+    text += `${description}\n\n`;
+  }
+  text += `${questionText}`;
+
   return {
     version: "2.0",
     template: {
       outputs: [
         {
-          simpleText: {
-            text: `${title} (${qIndex + 1}/${totalCount})\n${questionText}`
-          }
+          simpleText: { text }
         }
       ],
       quickReplies: [
@@ -179,20 +181,38 @@ function buildQuestionResponse({ title, qIndex, totalCount, questionText, choice
 
 function buildPHQ9ResultResponse(total, q9Score) {
   let levelText = "";
-  if (total <= 4) levelText = "최소 수준 (0–4점)";
-  else if (total <= 9) levelText = "가벼운 수준 (5–9점)";
-  else if (total <= 14) levelText = "중등도 수준 (10–14점)";
-  else if (total <= 19) levelText = "중등고도 수준 (15–19점)";
-  else levelText = "고도 수준 (20–27점)";
+  let adviceText = "";
+  let isLowRisk = false;
+
+  // 피드백 반영: 점수별 맞춤 멘트 적용
+  if (total <= 4) {
+    levelText = "최소 수준 (0–4점)";
+    adviceText = "현재 우울 증상이 거의 없는 안정적인 상태입니다. 지금의 건강한 일상을 잘 유지해 주세요!";
+    isLowRisk = true;
+  } else if (total <= 9) {
+    levelText = "가벼운 수준 (5–9점)";
+    adviceText = "가벼운 우울감이 관찰됩니다. 일상에서 스트레스 관리에 조금 더 신경 써주시면 좋겠습니다.";
+  } else if (total <= 14) {
+    levelText = "중등도 수준 (10–14점)";
+    adviceText = "중간 정도의 우울감이 있습니다. 충분한 휴식을 취하고, 필요하다면 전문상담 버튼을 눌러 상담을 진행해 보세요.";
+  } else if (total <= 19) {
+    levelText = "중등고도 수준 (15–19점)";
+    adviceText = "다소 높은 수준의 우울감이 있습니다. 전문 상담 버튼을 눌러 상담을 진행해보실 것을 권고드립니다.";
+  } else {
+    levelText = "고도 수준 (20–27점)";
+    adviceText = "심각한 수준의 우울감이 의심됩니다. 지체하지 마시고 반드시 아래 전문 상담 버튼을 눌러 상담을 받으시거나, 정신건강의학과의 도움을 받으시길 바랍니다.";
+  }
 
   let safetyText = "";
   if (q9Score >= 1) {
     safetyText =
-      "\n\n[안전 안내]\n자해/자살 관련 생각이 조금이라도 있었다면 혼자 두지 마세요.\n" +
-      "지금 도움: 자살예방상담전화 1393, 정신건강위기상담 1577-0199, 긴급 112/119";
+      "\n\n[🚨 안전 안내]\n자해/자살 관련 생각이 조금이라도 있었다면 혼자 두지 마세요.\n" +
+      "지금 즉시 도움: 자살예방상담전화 1393, 정신건강위기상담 1577-0199";
   }
 
-const isLowRisk = total <= 4;
+  let postSurveyText = isLowRisk 
+    ? `\n\n[참여 부탁] 결과가 안정적이시네요! 아래 링크에서 짧은 사후 조사에 참여해 주시면 큰 도움이 됩니다.\n👉 ${POST_SURVEY_URL}` 
+    : "";
 
   return {
     version: "2.0",
@@ -200,18 +220,12 @@ const isLowRisk = total <= 4;
       outputs: [
         {
           simpleText: {
-            text:
-              `PHQ-9 완료\n총점: ${total}점\n단계: ${levelText}\n\n` +
-              `이 결과는 진단이 아니라 상태 점검용입니다.\n` +
-              `최근 2주간 어려움이 지속되면 상담/전문가 도움을 고려해 주세요.` +
-              safetyText
+            text: `[PHQ-9 검사 결과]\n총점: ${total}점\n상태: ${levelText}\n\n${adviceText}${safetyText}${postSurveyText}`
           }
         }
       ],
       quickReplies: [
-	qrWebLink("사후 조사", FEEDBACK_URL),
         { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
-        { label: "PHQ-9 다시하기", action: "message", messageText: "PHQ9_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
@@ -220,10 +234,27 @@ const isLowRisk = total <= 4;
 
 function buildGAD7ResultResponse(total) {
   let levelText = "";
-  if (total <= 4) levelText = "최소 수준 (0–4점)";
-  else if (total <= 9) levelText = "가벼운 수준 (5–9점)";
-  else if (total <= 14) levelText = "중등도 수준 (10–14점)";
-  else levelText = "중증 수준 (15–21점)";
+  let adviceText = "";
+  let isLowRisk = false;
+
+  if (total <= 4) {
+    levelText = "최소 수준 (0–4점)";
+    adviceText = "현재 불안 증상이 거의 없이 편안한 상태입니다. 앞으로도 긍정적인 마음가짐을 유지해 보세요.";
+    isLowRisk = true;
+  } else if (total <= 9) {
+    levelText = "가벼운 수준 (5–9점)";
+    adviceText = "일상적인 수준의 가벼운 불안감이 있습니다. 심호흡이나 명상 등 가벼운 이완 활동이 도움이 될 수 있습니다.";
+  } else if (total <= 14) {
+    levelText = "중등도 수준 (10–14점)";
+    adviceText = "불안감으로 인해 일상생활에 다소 불편함이 있을 수 있습니다. 스스로 조절하기 어렵다면 전문가의 도움을 받아보세요.";
+  } else {
+    levelText = "중증 수준 (15–21점)";
+    adviceText = "높은 수준의 불안감이 지속되고 있습니다. 마음의 안정을 위해 전문 상담 버튼을 눌러보시어 센터나 전문의를 찾아가 보시는 것을 권장합니다.";
+  }
+
+  let postSurveyText = isLowRisk 
+    ? `\n\n[참여 부탁] 결과가 안정적이시네요! 아래 링크에서 짧은 사후 조사에 참여해 주시면 큰 도움이 됩니다.\n👉 ${POST_SURVEY_URL}` 
+    : "";
 
   return {
     version: "2.0",
@@ -231,26 +262,41 @@ function buildGAD7ResultResponse(total) {
       outputs: [
         {
           simpleText: {
-            text:
-              `GAD-7 완료\n총점: ${total}점\n단계: ${levelText}\n\n` +
-              `이 결과는 진단이 아니라 불안 증상 선별/점검용입니다.\n` +
-              `최근 2주간 불안/긴장이 지속되면 상담/전문가 도움을 고려해 주세요.`
+            text: `[GAD-7 검사 결과]\n총점: ${total}점\n상태: ${levelText}\n\n${adviceText}${postSurveyText}`
           }
         }
       ],
       quickReplies: [
-	qrWebLink("사후 조사", FEEDBACK_URL),
         { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
-        { label: "GAD-7 다시하기", action: "message", messageText: "GAD7_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
   };
 }
-
 
 function buildCESDResultResponse(total) {
-  let guide = total < 16 ? "낮은 수준(참고)" : "상대적으로 높은 수준(참고)";
+  let levelText = "";
+  let adviceText = "";
+  let isLowRisk = false;
+
+  if (total < 16) {
+    levelText = "정상 범위 (0–15점)";
+    adviceText = "지난 1주일간 우울 증상이 거의 나타나지 않았습니다. 지금의 건강한 일상을 계속 이어가 주세요.";
+    isLowRisk = true;
+  } else if (total <= 20) {
+    levelText = "경도 우울 (16-20점)";
+    adviceText = "가벼운 우울감이 보입니다. 지친 마음을 달래줄 수 있는 취미 생활이나 휴식이 필요할 수 있습니다.";
+  } else if (total <= 24) {
+    levelText = "중등도 우울 (21-24점)";
+    adviceText = "우울감이 다소 높은 편입니다. 일상에서 어려움이 지속된다면 주위에 고민을 나누거나 전문가의 도움을 고려해 보세요.";
+  } else {
+    levelText = "중증 우울 (25점 이상)";
+    adviceText = "상당한 수준의 우울감이 확인됩니다. 마음의 고통을 혼자 견디지 마시고, 꼭 전문 상담 버튼을 누르시어 전문적인 상담과 진료를 받아보시길 바랍니다.";
+  }
+
+  let postSurveyText = isLowRisk 
+    ? `\n\n[참여 부탁] 결과가 안정적이시네요! 아래 링크에서 짧은 사후 조사에 참여해 주시면 큰 도움이 됩니다.\n👉 ${POST_SURVEY_URL}` 
+    : "";
 
   return {
     version: "2.0",
@@ -258,29 +304,38 @@ function buildCESDResultResponse(total) {
       outputs: [
         {
           simpleText: {
-            text:
-              `CES-D 완료\n총점: ${total}점 (0–60)\n해석: ${guide}\n\n` +
-              `이 결과는 진단이 아니라 지난 1주일의 우울 관련 증상 점검용입니다.\n` +
-              `불편감이 지속되면 상담/전문가 도움을 고려해 주세요.`
+            text: `[CES-D 검사 결과]\n총점: ${total}점 (0–60)\n상태: ${levelText}\n\n${adviceText}${postSurveyText}`
           }
         }
       ],
       quickReplies: [
-	qrWebLink("사후 조사", FEEDBACK_URL),
         { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
-        { label: "CES-D 다시하기", action: "message", messageText: "CESD_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
   };
 }
-
 
 function buildCBIResultResponse(total) {
-  let level = "";
-  if (total <= 18) level = "번아웃 위험 낮음";
-  else if (total <= 35) level = "중등도 번아웃";
-  else level = "높은 번아웃 위험";
+  let levelText = "";
+  let adviceText = "";
+  let isLowRisk = false;
+
+  if (total <= 18) {
+    levelText = "번아웃 위험 낮음";
+    adviceText = "학업이나 업무로 인한 탈진감이 낮은 상태입니다. 워라밸을 잘 유지하고 계신 것 같습니다!";
+    isLowRisk = true;
+  } else if (total <= 35) {
+    levelText = "중등도 번아웃";
+    adviceText = "어느 정도의 지침과 피로감이 누적되어 있습니다. 무리하지 마시고 잠시 쉬어가는 시간을 가지는 것이 좋습니다.";
+  } else {
+    levelText = "높은 번아웃 위험";
+    adviceText = "심각한 수준의 번아웃이 의심됩니다. 신체적, 정신적 회복이 시급한 상태이니 일정을 조율하고 전문 상담 버튼을 누르시어 상담을 받아보세요.";
+  }
+
+  let postSurveyText = isLowRisk 
+    ? `\n\n[참여 부탁] 결과가 안정적이시네요! 아래 링크에서 짧은 사후 조사에 참여해 주시면 큰 도움이 됩니다.\n👉 ${POST_SURVEY_URL}` 
+    : "";
 
   return {
     version: "2.0",
@@ -288,23 +343,17 @@ function buildCBIResultResponse(total) {
       outputs: [
         {
           simpleText: {
-            text:
-              `번아웃 점검 완료\n총점: ${total}점\n상태: ${level}\n\n` +
-              `본 검사는 Copenhagen Burnout Inventory(CBI)를 참고한 자가 점검입니다.\n` +
-              `진단 목적이 아니며, 불편감이 지속되면 상담을 권장합니다.`
+            text: `[CBI 번아웃 결과]\n총점: ${total}점\n상태: ${levelText}\n\n${adviceText}${postSurveyText}`
           }
         }
       ],
       quickReplies: [
-	qrWebLink("사후 조사", FEEDBACK_URL),
         { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
-        { label: "CBI 다시하기", action: "message", messageText: "CBI_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
   };
 }
-
 
 function buildHelpResponse() {
   return {
@@ -314,32 +363,23 @@ function buildHelpResponse() {
         {
           simpleText: {
             text:
-              "상담/도움 안내\n" +
-              "- 자살예방상담전화: 1393\n" +
-              "- 정신건강위기상담: 1577-0199\n" +
-              "- 보건복지상담: 129\n" +
-              "- 긴급: 112/119\n\n" +
-              "교내/기관 상담 링크는 운영 정책에 맞게 연결해 주세요."
+              "상담 및 전문가 도움 안내\n\n" +
+              "📞 자살예방상담전화: 1393\n" +
+              "📞 정신건강위기상담: 1577-0199\n" +
+              "📞 보건복지상담센터: 129\n" +
+              "📞 긴급신고: 112 / 119\n\n" +
+              "도움이 필요하다면 언제든 위 번호로 연락해 주세요. 당신은 혼자가 아닙니다."
           }
         }
       ],
       quickReplies: [
-        { label: "PHQ-9 시작", action: "message", messageText: "PHQ9_START" },
-        { label: "GAD-7 시작", action: "message", messageText: "GAD7_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
   };
 }
 
-function qrWebLink(label, url) {
-  return { label, action: "webLink", webLinkUrl: url };
-}
-
-function qrMsg(label, messageText) {
-  return { label, action: "message", messageText };
-}
-
+// 피드백 반영: 초입 소개말 (목적, 방향, 가치) 추가
 function buildHomeResponse() {
   return {
     version: "2.0",
@@ -347,17 +387,22 @@ function buildHomeResponse() {
       outputs: [
         {
           simpleText: {
-            text: "원하는 설문을 선택해 주세요."
+            text: 
+              "안녕하세요! 마음 건강을 점검해 볼 수 있는 챗봇입니다.\n\n" +
+              "💡 [목적] 스스로의 심리 상태를 돌아보고, 필요시 적절한 도움을 받을 수 있도록 안내하기 위해 마련되었습니다.\n\n" +
+              "📌 [진행 방향] 아래 버튼에서 원하시는 검사를 선택하시면 객관식 설문이 바로 진행됩니다.\n\n" +
+              "🎁 [얻는 가치] 현재 나의 우울, 불안, 번아웃 정도를 객관적인 지표로 확인하고 맞춤형 피드백을 받아보실 수 있습니다.\n\n" +
+              "원하시는 설문을 아래에서 선택해 주세요."
           }
         }
       ],
       quickReplies: [
- 	{ label: "PHQ-9", action: "message", messageText: "PHQ9_START" },
-  	{ label: "GAD-7", action: "message", messageText: "GAD7_START" },
-  	{ label: "CES-D", action: "message", messageText: "CESD_START" },
-  	{ label: "번아웃(CBI)", action: "message", messageText: "CBI_START" },
-  	{ label: "상담 안내", action: "message", messageText: "HELP_LINK" }
-	]
+        { label: "PHQ-9 (우울)", action: "message", messageText: "PHQ9_START" },
+        { label: "GAD-7 (불안)", action: "message", messageText: "GAD7_START" },
+        { label: "CES-D (일상우울)", action: "message", messageText: "CESD_START" },
+        { label: "번아웃 (CBI)", action: "message", messageText: "CBI_START" },
+        { label: "상담 안내", action: "message", messageText: "HELP_LINK" }
+      ]
     }
   };
 }
@@ -369,13 +414,11 @@ function buildFallbackResponse() {
       outputs: [
         {
           simpleText: {
-            text: "명령을 이해하지 못했습니다. PHQ9_START 또는 GAD7_START로 시작해 주세요."
+            text: "명령을 이해하지 못했습니다. 아래 버튼을 눌러 처음으로 돌아가 주세요."
           }
         }
       ],
       quickReplies: [
-        { label: "PHQ-9 시작", action: "message", messageText: "PHQ9_START" },
-        { label: "GAD-7 시작", action: "message", messageText: "GAD7_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
@@ -383,25 +426,23 @@ function buildFallbackResponse() {
 }
 
 // ======================
-// 5) 라우트
+// 7) 라우트 설정
 // ======================
 app.get("/health", (req, res) => res.status(200).send("ok"));
 
+// --- PHQ-9 라우트 ---
 app.post("/skill/phq9", (req, res) => {
-  console.log("=== PHQ9 skill payload ===");
-  console.log(JSON.stringify(req.body, null, 2));
-
   const utterance = req.body?.userRequest?.utterance || "";
   const userId = getUserId(req.body);
   const state = getOrCreateUserState(userId);
   state.updatedAt = Date.now();
 
-  // 시작
   if (utterance === "PHQ9_START" || utterance === "PHQ-9" || utterance === "PHQ9") {
     const s = resetSurvey(userId, "phq9");
     return res.status(200).json(
       buildQuestionResponse({
         title: "PHQ-9",
+        description: "💡 PHQ-9는 최근 2주간의 우울 증상을 점검하는 자가진단 검사입니다.",
         qIndex: s.qIndex,
         totalCount: PHQ9_QUESTIONS.length,
         questionText: PHQ9_QUESTIONS[s.qIndex],
@@ -411,7 +452,6 @@ app.post("/skill/phq9", (req, res) => {
     );
   }
 
-  // 답변
   if (/^PHQ9_A[0-3]$/.test(utterance)) {
     const score = Number(utterance.replace("PHQ9_A", ""));
     const s = state.phq9;
@@ -431,7 +471,6 @@ app.post("/skill/phq9", (req, res) => {
         })
       );
     }
-
     const total = s.answers.reduce((a, b) => a + b, 0);
     const q9Score = s.answers[8] ?? 0;
     return res.status(200).json(buildPHQ9ResultResponse(total, q9Score));
@@ -439,25 +478,22 @@ app.post("/skill/phq9", (req, res) => {
 
   if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
   if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
-
   return res.status(200).json(buildFallbackResponse());
 });
 
+// --- GAD-7 라우트 ---
 app.post("/skill/gad7", (req, res) => {
-  console.log("=== GAD7 skill payload ===");
-  console.log(JSON.stringify(req.body, null, 2));
-
   const utterance = req.body?.userRequest?.utterance || "";
   const userId = getUserId(req.body);
   const state = getOrCreateUserState(userId);
   state.updatedAt = Date.now();
 
-  // 시작
   if (utterance === "GAD7_START" || utterance === "GAD-7" || utterance === "GAD7") {
     const s = resetSurvey(userId, "gad7");
     return res.status(200).json(
       buildQuestionResponse({
         title: "GAD-7",
+        description: "💡 GAD-7은 최근 2주간의 불안 증상 정도를 점검하는 자가진단 검사입니다.",
         qIndex: s.qIndex,
         totalCount: GAD7_QUESTIONS.length,
         questionText: GAD7_QUESTIONS[s.qIndex],
@@ -467,7 +503,6 @@ app.post("/skill/gad7", (req, res) => {
     );
   }
 
-  // 답변
   if (/^GAD7_A[0-3]$/.test(utterance)) {
     const score = Number(utterance.replace("GAD7_A", ""));
     const s = state.gad7;
@@ -487,32 +522,28 @@ app.post("/skill/gad7", (req, res) => {
         })
       );
     }
-
     const total = s.answers.reduce((a, b) => a + b, 0);
     return res.status(200).json(buildGAD7ResultResponse(total));
   }
 
   if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
   if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
-
   return res.status(200).json(buildFallbackResponse());
 });
 
+// --- CES-D 라우트 ---
 app.post("/skill/cesd", (req, res) => {
-  console.log("=== CESD skill payload ===");
-  console.log(JSON.stringify(req.body, null, 2));
-
   const utterance = req.body?.userRequest?.utterance || "";
   const userId = getUserId(req.body);
   const state = getOrCreateUserState(userId);
   state.updatedAt = Date.now();
 
-  // 1️⃣ CES-D 시작
   if (utterance === "CESD_START" || utterance === "CES-D" || utterance === "CESD") {
     const s = resetSurvey(userId, "cesd");
     return res.status(200).json(
       buildQuestionResponse({
-        title: "CES-D (지난 1주일)",
+        title: "CES-D",
+        description: "💡 CES-D는 지난 1주일간 경험한 일상적인 우울감을 확인하는 검사입니다.",
         qIndex: s.qIndex,
         totalCount: CESD_QUESTIONS.length,
         questionText: CESD_QUESTIONS[s.qIndex],
@@ -522,28 +553,19 @@ app.post("/skill/cesd", (req, res) => {
     );
   }
 
-  // 2️⃣ 점수 응답 처리
+  // 피드백 반영: 질문이 부정형으로 통일되었으므로 역채점 계산식을 완전히 제거하고 순수하게 더합니다.
   if (/^CESD_A[0-3]$/.test(utterance)) {
-    const rawScore = Number(utterance.replace("CESD_A", ""));
+    const score = Number(utterance.replace("CESD_A", ""));
     const s = state.cesd;
-
-    // 문항 번호 (1부터 시작)
-    const itemNo = s.qIndex + 1;
-
-    // 역채점 문항 처리
-    const score = CESD_REVERSE_ITEMS.has(itemNo)
-      ? 3 - rawScore
-      : rawScore;
 
     s.answers.push(score);
     s.qIndex += 1;
     state.updatedAt = Date.now();
 
-    // 다음 문항
     if (s.qIndex < CESD_QUESTIONS.length) {
       return res.status(200).json(
         buildQuestionResponse({
-          title: "CES-D (지난 1주일)",
+          title: "CES-D",
           qIndex: s.qIndex,
           totalCount: CESD_QUESTIONS.length,
           questionText: CESD_QUESTIONS[s.qIndex],
@@ -553,20 +575,16 @@ app.post("/skill/cesd", (req, res) => {
       );
     }
 
-    // 3️⃣ 결과 출력
     const total = s.answers.reduce((a, b) => a + b, 0);
     return res.status(200).json(buildCESDResultResponse(total));
   }
 
-  // 공통 명령
   if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
   if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
-
-  // 그 외 입력
   return res.status(200).json(buildFallbackResponse());
 });
 
-
+// --- CBI 라우트 ---
 app.post("/skill/cbi", (req, res) => {
   const utterance = req.body?.userRequest?.utterance || "";
   const userId = getUserId(req.body);
@@ -577,7 +595,8 @@ app.post("/skill/cbi", (req, res) => {
     const s = resetSurvey(userId, "cbi");
     return res.status(200).json(
       buildQuestionResponse({
-        title: "번아웃 점검 (CBI 기반)",
+        title: "번아웃 점검",
+        description: "💡 CBI는 현재 업무나 학업으로 인한 번아웃(탈진) 상태를 점검하는 검사입니다.",
         qIndex: s.qIndex,
         totalCount: CBI_QUESTIONS.length,
         questionText: CBI_QUESTIONS[s.qIndex],
@@ -596,7 +615,7 @@ app.post("/skill/cbi", (req, res) => {
     if (s.qIndex < CBI_QUESTIONS.length) {
       return res.status(200).json(
         buildQuestionResponse({
-          title: "번아웃 점검 (CBI 기반)",
+          title: "번아웃 점검",
           qIndex: s.qIndex,
           totalCount: CBI_QUESTIONS.length,
           questionText: CBI_QUESTIONS[s.qIndex],
@@ -612,14 +631,11 @@ app.post("/skill/cbi", (req, res) => {
 
   if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
   if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
-
   return res.status(200).json(buildFallbackResponse());
 });
 
-
 // ======================
-// 6) 세션 자동 정리 (메모리 누적 방지)
-// - 30분 이상 미사용 세션 삭제
+// 8) 세션 자동 정리
 // ======================
 setInterval(() => {
   const now = Date.now();
@@ -629,10 +645,10 @@ setInterval(() => {
       delete sessions[uid];
     }
   }
-}, 10 * 60 * 1000); // 10분마다 정리
+}, 10 * 60 * 1000);
 
 // ======================
-// 7) 서버 실행 (Render용 PORT 환경변수 대응)
+// 9) 서버 실행
 // ======================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
