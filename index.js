@@ -1,3 +1,5 @@
+#GPT_수정본
+
 const express = require("express");
 const app = express();
 
@@ -17,6 +19,8 @@ const PHQ9_QUESTIONS = [
   "8. 신문을 읽거나 TV를 보는 것과 같은 일상적인 일에도 집중할 수가 없었다.",
   "9. 차라리 죽는 것이 더 낫겠다고 생각했다 / 혹은 자해할 생각을 했다."
 ];
+
+const FEEDBACK_URL = "https://forms.gle/zJFE9p5gWWcmVdYJ7";
 
 const PHQ9_CHOICES = [
   { label: "전혀 아니다 (0점)", score: 0 },
@@ -188,6 +192,8 @@ function buildPHQ9ResultResponse(total, q9Score) {
       "지금 도움: 자살예방상담전화 1393, 정신건강위기상담 1577-0199, 긴급 112/119";
   }
 
+const isLowRisk = total <= 4;
+
   return {
     version: "2.0",
     template: {
@@ -203,9 +209,9 @@ function buildPHQ9ResultResponse(total, q9Score) {
         }
       ],
       quickReplies: [
+	qrWebLink("사후 조사", FEEDBACK_URL),
         { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
         { label: "PHQ-9 다시하기", action: "message", messageText: "PHQ9_START" },
-        { label: "GAD-7 하기", action: "message", messageText: "GAD7_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
@@ -233,9 +239,9 @@ function buildGAD7ResultResponse(total) {
         }
       ],
       quickReplies: [
+	qrWebLink("사후 조사", FEEDBACK_URL),
         { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
         { label: "GAD-7 다시하기", action: "message", messageText: "GAD7_START" },
-        { label: "PHQ-9 하기", action: "message", messageText: "PHQ9_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
@@ -260,10 +266,9 @@ function buildCESDResultResponse(total) {
         }
       ],
       quickReplies: [
+	qrWebLink("사후 조사", FEEDBACK_URL),
         { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
         { label: "CES-D 다시하기", action: "message", messageText: "CESD_START" },
-        { label: "PHQ-9 하기", action: "message", messageText: "PHQ9_START" },
-        { label: "GAD-7 하기", action: "message", messageText: "GAD7_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
@@ -291,8 +296,9 @@ function buildCBIResultResponse(total) {
         }
       ],
       quickReplies: [
+	qrWebLink("사후 조사", FEEDBACK_URL),
         { label: "상담 안내", action: "message", messageText: "HELP_LINK" },
-        { label: "번아웃 다시하기", action: "message", messageText: "CBI_START" },
+        { label: "CBI 다시하기", action: "message", messageText: "CBI_START" },
         { label: "처음으로", action: "message", messageText: "HOME" }
       ]
     }
@@ -324,6 +330,14 @@ function buildHelpResponse() {
       ]
     }
   };
+}
+
+function qrWebLink(label, url) {
+  return { label, action: "webLink", webLinkUrl: url };
+}
+
+function qrMsg(label, messageText) {
+  return { label, action: "message", messageText };
 }
 
 function buildHomeResponse() {
