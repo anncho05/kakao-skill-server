@@ -7,7 +7,7 @@ app.use(express.json());
 // [설정] 외부 링크 주소 모음
 // ======================
 const FEEDBACK_URL = "https://forms.gle/zJFE9p5gWWcmVdYJ7"; // 사후 조사 링크
-const COUNSELOR_URL = "https://orangecounselor.com/";       // 전문 상담 링크 (위험군에게만 노출)
+const COUNSELOR_URL = "https://orangecounselor.com/";       // 전문 상담 링크
 
 // ======================
 // 1) PHQ-9 문항
@@ -115,7 +115,7 @@ const CBI_CHOICES = [
 ];
 
 // ======================
-// 5) 다중 사용자 세션 저장소 (메모리 기반)
+// 5) 다중 사용자 세션 저장소
 // ======================
 const sessions = Object.create(null);
 
@@ -152,10 +152,6 @@ function resetSurvey(userId, surveyKey) {
 // ======================
 // 6) 응답 빌더 헬퍼 함수
 // ======================
-function qrWebLink(label, url) {
-  return { label, action: "webLink", webLinkUrl: url };
-}
-
 function qrMsg(label, messageText) {
   return { label, action: "message", messageText };
 }
@@ -183,8 +179,41 @@ function buildQuestionResponse({ title, qIndex, totalCount, questionText, choice
   };
 }
 
+// 📌 텍스트 링크 응답 함수 추가
+function buildFeedbackResponse() {
+  return {
+    version: "2.0",
+    template: {
+      outputs: [
+        {
+          simpleText: {
+            text: `[사후 조사 안내]\n검사에 참여해 주셔서 감사합니다! 아래 링크를 눌러 사후 조사에 참여해 주시면 큰 도움이 됩니다.\n\n👉 ${FEEDBACK_URL}`
+          }
+        }
+      ],
+      quickReplies: [ { label: "처음으로", action: "message", messageText: "HOME" } ]
+    }
+  };
+}
+
+function buildCounselorResponse() {
+  return {
+    version: "2.0",
+    template: {
+      outputs: [
+        {
+          simpleText: {
+            text: `[전문 상담 안내]\n마음이 많이 지치셨군요. 혼자 고민하지 마시고 전문가의 도움을 받아보시길 권장합니다. 아래 링크를 눌러 상담을 예약하실 수 있습니다.\n\n👉 ${COUNSELOR_URL}`
+          }
+        }
+      ],
+      quickReplies: [ { label: "처음으로", action: "message", messageText: "HOME" } ]
+    }
+  };
+}
+
 // ======================
-// 7) 결과 응답 빌더 (전문상담 링크 로직 추가됨)
+// 7) 결과 응답 빌더 (기존 상담 버튼 제거 & 텍스트 호출 버튼으로 변경)
 // ======================
 function buildPHQ9ResultResponse(total, q9Score) {
   let levelText = "";
@@ -197,19 +226,16 @@ function buildPHQ9ResultResponse(total, q9Score) {
   let safetyText = "";
   if (q9Score >= 1) {
     safetyText =
-      "\n\n[🚨 안전 안내]\n자해/자살 관련 생각이 조금이라도 있었다면 혼자 두지 마세요.\n" +
-      "지금 도움: 자살예방상담전화 1393, 정신건강위기상담 1577-0199, 긴급 112/119";
+      "\n\n[🚨 안전 안내]\n자해/자살 관련 생각이 조금이라도 있었다면 혼자 두지 마세요.\n지금 도움: 자살예방상담전화 1393, 정신건강위기상담 1577-0199, 긴급 112/119";
   }
 
-  // ★ 중등도(10점) 이상이거나 9번 문항(자살생각) 점수가 있으면 전문 상담 권유
   const isHighRisk = total >= 10 || q9Score >= 1;
-  const quickReplies = [ qrWebLink("📝 사후 조사", FEEDBACK_URL) ]; // 무조건 사후조사 띄움
+  const quickReplies = [ qrMsg("📝 사후 조사", "사후 조사 안내") ];
 
   if (isHighRisk) {
-    quickReplies.push(qrWebLink("🩺 전문 상담 연결", COUNSELOR_URL));
+    quickReplies.push(qrMsg("🩺 전문 상담 연결", "전문 상담 안내"));
   }
   
-  quickReplies.push(qrMsg("상담 안내", "HELP_LINK"));
   quickReplies.push(qrMsg("다시하기", "PHQ9_START"));
   quickReplies.push(qrMsg("처음으로", "HOME"));
 
@@ -235,15 +261,13 @@ function buildGAD7ResultResponse(total) {
   else if (total <= 14) levelText = "중등도 수준 (10–14점)";
   else levelText = "중증 수준 (15–21점)";
 
-  // ★ 불안 중등도(10점) 이상이면 전문 상담 권유
   const isHighRisk = total >= 10;
-  const quickReplies = [ qrWebLink("📝 사후 조사", FEEDBACK_URL) ];
+  const quickReplies = [ qrMsg("📝 사후 조사", "사후 조사 안내") ];
 
   if (isHighRisk) {
-    quickReplies.push(qrWebLink("🩺 전문 상담 연결", COUNSELOR_URL));
+    quickReplies.push(qrMsg("🩺 전문 상담 연결", "전문 상담 안내"));
   }
   
-  quickReplies.push(qrMsg("상담 안내", "HELP_LINK"));
   quickReplies.push(qrMsg("다시하기", "GAD7_START"));
   quickReplies.push(qrMsg("처음으로", "HOME"));
 
@@ -265,15 +289,13 @@ function buildGAD7ResultResponse(total) {
 function buildCESDResultResponse(total) {
   let guide = total < 16 ? "낮은 수준(참고)" : "상대적으로 높은 수준(참고)";
 
-  // ★ 우울감 비교적 높음(16점 이상)이면 전문 상담 권유
   const isHighRisk = total >= 16;
-  const quickReplies = [ qrWebLink("📝 사후 조사", FEEDBACK_URL) ];
+  const quickReplies = [ qrMsg("📝 사후 조사", "사후 조사 안내") ];
 
   if (isHighRisk) {
-    quickReplies.push(qrWebLink("🩺 전문 상담 연결", COUNSELOR_URL));
+    quickReplies.push(qrMsg("🩺 전문 상담 연결", "전문 상담 안내"));
   }
   
-  quickReplies.push(qrMsg("상담 안내", "HELP_LINK"));
   quickReplies.push(qrMsg("다시하기", "CESD_START"));
   quickReplies.push(qrMsg("처음으로", "HOME"));
 
@@ -298,15 +320,13 @@ function buildCBIResultResponse(total) {
   else if (total <= 35) level = "중등도 번아웃";
   else level = "높은 번아웃 위험";
 
-  // ★ 번아웃 중등도(19점 이상)이면 전문 상담 권유
   const isHighRisk = total > 18;
-  const quickReplies = [ qrWebLink("📝 사후 조사", FEEDBACK_URL) ];
+  const quickReplies = [ qrMsg("📝 사후 조사", "사후 조사 안내") ];
 
   if (isHighRisk) {
-    quickReplies.push(qrWebLink("🩺 전문 상담 연결", COUNSELOR_URL));
+    quickReplies.push(qrMsg("🩺 전문 상담 연결", "전문 상담 안내"));
   }
   
-  quickReplies.push(qrMsg("상담 안내", "HELP_LINK"));
   quickReplies.push(qrMsg("다시하기", "CBI_START"));
   quickReplies.push(qrMsg("처음으로", "HOME"));
 
@@ -321,31 +341,6 @@ function buildCBIResultResponse(total) {
         }
       ],
       quickReplies
-    }
-  };
-}
-
-function buildHelpResponse() {
-  return {
-    version: "2.0",
-    template: {
-      outputs: [
-        {
-          simpleText: {
-            text:
-              "상담/도움 안내\n" +
-              "- 자살예방상담전화: 1393\n" +
-              "- 정신건강위기상담: 1577-0199\n" +
-              "- 보건복지상담: 129\n" +
-              "- 긴급: 112/119\n\n" +
-              "교내/기관 상담 링크는 운영 정책에 맞게 연결해 주세요."
-          }
-        }
-      ],
-      quickReplies: [
-        qrWebLink("전문 상담 예약", COUNSELOR_URL),
-        { label: "처음으로", action: "message", messageText: "HOME" }
-      ]
     }
   };
 }
@@ -365,8 +360,7 @@ function buildHomeResponse() {
         { label: "PHQ-9", action: "message", messageText: "PHQ9_START" },
         { label: "GAD-7", action: "message", messageText: "GAD7_START" },
         { label: "CES-D", action: "message", messageText: "CESD_START" },
-        { label: "번아웃(CBI)", action: "message", messageText: "CBI_START" },
-        { label: "상담 안내", action: "message", messageText: "HELP_LINK" }
+        { label: "번아웃(CBI)", action: "message", messageText: "CBI_START" }
       ]
     }
   };
@@ -400,6 +394,10 @@ app.post("/skill/phq9", (req, res) => {
   const userId = getUserId(req.body);
   const state = getOrCreateUserState(userId);
   state.updatedAt = Date.now();
+
+  // 📌 텍스트 응답 라우트 추가
+  if (utterance === "사후 조사 안내") return res.status(200).json(buildFeedbackResponse());
+  if (utterance === "전문 상담 안내") return res.status(200).json(buildCounselorResponse());
 
   if (utterance === "PHQ9_START" || utterance === "PHQ-9" || utterance === "PHQ9") {
     const s = resetSurvey(userId, "phq9");
@@ -440,9 +438,7 @@ app.post("/skill/phq9", (req, res) => {
     return res.status(200).json(buildPHQ9ResultResponse(total, q9Score));
   }
 
-  if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
   if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
-
   return res.status(200).json(buildFallbackResponse());
 });
 
@@ -451,6 +447,9 @@ app.post("/skill/gad7", (req, res) => {
   const userId = getUserId(req.body);
   const state = getOrCreateUserState(userId);
   state.updatedAt = Date.now();
+
+  if (utterance === "사후 조사 안내") return res.status(200).json(buildFeedbackResponse());
+  if (utterance === "전문 상담 안내") return res.status(200).json(buildCounselorResponse());
 
   if (utterance === "GAD7_START" || utterance === "GAD-7" || utterance === "GAD7") {
     const s = resetSurvey(userId, "gad7");
@@ -490,9 +489,7 @@ app.post("/skill/gad7", (req, res) => {
     return res.status(200).json(buildGAD7ResultResponse(total));
   }
 
-  if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
   if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
-
   return res.status(200).json(buildFallbackResponse());
 });
 
@@ -501,6 +498,9 @@ app.post("/skill/cesd", (req, res) => {
   const userId = getUserId(req.body);
   const state = getOrCreateUserState(userId);
   state.updatedAt = Date.now();
+
+  if (utterance === "사후 조사 안내") return res.status(200).json(buildFeedbackResponse());
+  if (utterance === "전문 상담 안내") return res.status(200).json(buildCounselorResponse());
 
   if (utterance === "CESD_START" || utterance === "CES-D" || utterance === "CESD") {
     const s = resetSurvey(userId, "cesd");
@@ -543,9 +543,7 @@ app.post("/skill/cesd", (req, res) => {
     return res.status(200).json(buildCESDResultResponse(total));
   }
 
-  if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
   if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
-
   return res.status(200).json(buildFallbackResponse());
 });
 
@@ -554,6 +552,9 @@ app.post("/skill/cbi", (req, res) => {
   const userId = getUserId(req.body);
   const state = getOrCreateUserState(userId);
   state.updatedAt = Date.now();
+
+  if (utterance === "사후 조사 안내") return res.status(200).json(buildFeedbackResponse());
+  if (utterance === "전문 상담 안내") return res.status(200).json(buildCounselorResponse());
 
   if (utterance === "CBI_START") {
     const s = resetSurvey(userId, "cbi");
@@ -592,9 +593,7 @@ app.post("/skill/cbi", (req, res) => {
     return res.status(200).json(buildCBIResultResponse(total));
   }
 
-  if (utterance === "HELP_LINK") return res.status(200).json(buildHelpResponse());
   if (utterance === "HOME") return res.status(200).json(buildHomeResponse());
-
   return res.status(200).json(buildFallbackResponse());
 });
 
